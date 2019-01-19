@@ -1,0 +1,262 @@
+---
+title: "Flow Cytometry in R with openCyto"
+output: html_notebook
+---
+
+## Intro
+
+Welcome to openCyto. openCyto is an R framework developed in 2014. Today we are going to focus on the basics. At the centre of openCyto's infrastructure is something called `flowCore`. This package was developed way back in 2009. Remember 2009? It was the year when this photos like this went viral:
+
+![simpler times...](https://popculturemadness.com/PCM/wp-content/uploads/2013/06/2009squirrel-photo-bomb.jpg)
+
+</br></br>You can read all about flowCore over at the [Bioconductor](https://bioconductor.org/packages/release/bioc/html/flowCore.html) website. Here are some extra resources as well:
+
+* https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-10-106
+* https://bioconductor.org/packages/release/bioc/vignettes/flowCore/inst/doc/HowTo-flowCore.pdf
+
+I'm going to gently introduce you to flowCore's data structures within the openCyto framework.
+
+## Dependencies
+
+```{r echo=T}
+require(openCyto)
+require(ggcyto)
+```
+
+
+## Reading data into R
+
+You can think of the data being organised as so:
+
+* At the lowest level is the `flowFrame` (see below)
+* Each fcs file will be contained in its how `flowFrame` embedded in a `flowSet`
+  + we actually load data as an `ncdfFlowSet` - this is an optimised data structure where the the `flowSet` is stored on disk and only parts are loaded into memory as and when needed. This is important because .fcs files are big!
+* `GatingSet` objects then hold everything together and is the main API that the user will interact with. It is a container that holds `GatingHierarchy`. Think of a `GatingSet` as corresponding to a `flowSet` and a `GatingHierarchy` as corresponding to a `flowFrame`.
+  + IMPORTANT `GatingSet` uses externnal pointers and therefore uses a reference semantic - i.e. functions that operative on a `GatingSet` have the potential side-effect of modifying the object
+
+We going to start at the highest level - a `GatingSet` - and then work down to the `flowFrame`, exploring methods and data manipulation as we go.
+
+### Creating a `GatingSet`
+
+First we create a `ncdfFlowSet` - this is easy, we simple pass the path for the directory containing our FCS files to the method `read.ncdfFlowSet()`
+
+Then we pass the resulting `ncdfFlowSet` too the `GatingSet` method.
+
+```{r echo=TRUE}
+fcsFiles <- dir("/home/rossco/Documents/I&IGeeks/flow/fcs", full.names = TRUE)
+ncfs  <- read.ncdfFlowSet(fcsFiles)
+gs <- GatingSet(ncfs)
+gs
+```
+
+### Compensation and Transformation
+
+*Compensation*
+
+Before I dive into data structures and plots, I want to quickly go over compensation and transforming data.
+
+Now typically you might need to compensate your data. Lucky for me this data was compensated on the machine. But, if you were to compensate you would use the following method:
+
+`compensate(gs, comp)`
+
+Where `comp` is a matrix of spillover values.
+
+Since my data is already compensated, I can access the compensation data as an attribute of the 'description' slot:
+
+```{r echo=TRUE}
+#Access the flowframe of my ncfs object using square bracket notation
+ncfs[[1]]@description$SPILL
+```
+
+I can make this prettier with the levelplot function from lattice:
+
+```{r}
+require(lattice)
+m <- ncfs[[1]]@description$SPILL
+rownames(m) <- paste(colnames(m))
+levelplot(m, scales=list(x=list(rot=90)))
+```
+
+*Transforming data*
+
+The data is by default loaded into a `flowFrame` with a linear axis. We want to transform our data to a Logicle or Biexponential axis. This is so data is evenly distributed across the axis.
+
+Before transformation:
+
+```{r}
+autoplot(ncfs[[1]], "CD3")
+```
+
+After a logicle transform:
+
+```{r echo=TRUE}
+chnls <- colnames(m)
+trans <- estimateLogicle(gs[[1]], channels = chnls)
+gs <- transform(gs, trans)
+```
+
+```{r}
+autoplot(getData(gs[[1]]), "CD3")
+```
+
+Lets step through what I did in that code snippet above:
+
+* `chnls` is just the column names from my compensation matrix. I used this because I know the columns in my compensation matrix correspond to my flourochromes and these are the columns I want to transform
+* `estimateLogicle` is a method in openCyto that returns a special type of object called a `transformList`. This maps a transform function (in this case a function that transforms the data to a Logicle scale) to the list of columns in `channel`
+* We then apply the transformation to the `GatingSet` using R's transform function, this will apply the transformation to all containing `flowFrame`s
+
+## What are all these crazy data structures?!
+
+The main data structure you need to learn is the flowFrame, this is the basic unit and it contains three slots:
+
+* `exprs` - contains the event level information - your intensities. This is where the data is and its stored as a simple matrix.
+* `parameters` - contains column metadata stored as an annotated dataframe. All the detector and stain information is in here.
+* `description`
+
+There are a bunch of methods we can use to access elements of a flowFrame, the ones we will use most commonly are:
+
+* `exprs()` - returns our flow data as a matrix
+* `description()` -  returns metadata as a list
+* `parameters` -  returns an annotated dataframe containing information about each column - usually constructed from keywords
+* `names()` - returns a concatenated version of our column names, similar to that seen in FlowJo
+* `featureNames()` - returns the discription field of the parameters
+* `colnames()` - returns the detector names, often named after the fluorochrome detected
+* `keyword()` - returns the raw FCS keywords. This will be a whole bunch of metadata from the machine
+
+We can access a flowFrame by using the getData method:
+
+```{r echo = T}
+summary(getData(gs[[1]]))
+```
+
+If you just want the flourescence intensity values as a basic R matrix then you can just run the code below:
+
+```{r echo=T}
+f <- getData(gs[[1]])
+m <- exprs(f)
+head(m)
+```
+
+One super useful thing we can pull out of the parameters is the keywords associated to our columns i.e. what antibody is associated to what fluorochrome:
+
+```{r echo=T}
+parameters(f)
+```
+
+```{r echo=T}
+parameters(f)$name
+```
+
+```{r echo=T}
+parameters(f)$desc
+```
+
+
+## Thats great!...but I want to make plots!
+
+Plots in flow cytometry normally imply gating. When processing data in R I want you to think about processing the data in two independant ways:
+
+* Good'ol fasion gating....but automated
+* High dimensional analysis - clustering, dimesionality reduction etc
+
+What I will cover in this notebook is gating, I'm going to leave the super fancy machine learning for another time.
+
+![](https://i.imgur.com/llDzNEd.jpg)
+
+Lets get plotting. Some crazy cats have built on-top of the ggplot library something called `ggcyto` which inherits all the functionality but is adapted to work with flowCore data structures.
+
+The ggcyto library allows for three levels of interaction, at its lowest level you can use ggplot directly, this is because ggcyto's `fortify` method empowers ggplot to interface with flowCore data structures.
+
+I think this is mostly unnecessary thought and brings out some odd behaviours in my experience - it is reliant on you having a solid gating template setup, which we don't have yet, we will get to that later.
+
+For now lets look at the medium level, calls to `ggcyto`. It simplies the plotting by: 
+* add a default scale_fill_gradientn for you
+* fuzzy-matching in aes by either detector or fluorochromes names (using keywords assocaited to a column - remember these are stored in the paramters slot of the flowFrame)
+* determine the parent popoulation automatically 
+* exact and plot the gate object by simply referring to the child population name
+
+
+```{r echo=T}
+fs <- getData(gs)
+ggcyto(fs, aes(x = CD57)) + geom_density(fill="purple", alpha=0.5)
+```
+
+```{r echo=T}
+ggcyto(fs, aes(x = FSC.A, y = SSC.A)) + geom_hex(bins=128)
+```
+
+At the highest level is the `autoplot` function. It inherits the spirit of R's quick plot:
+
+* when plotting flowSet, it determines geom type automatically by the number of dim supplied
+* for GatingSet, it further skip the need of dim by guessing it from the children gate
+
+```{r echo=T}
+autoplot(fs, "CD45RA")
+```
+
+
+```{r echo=T}
+autoplot(fs, "CD3", "L/D", bins=128)
+```
+
+## Gating!
+
+So far we've been talking about GatingSets and GatingHierarchy but not gone into much detail as to what these are. Basically, openCyto applies a GatingTemplate to all of the samples in a GatingSet, providing a common API for accessing elements of your gated data. 
+
+We're going to build a very simple gating strategy by adding gates directly in code the flowCore way, then I will briefly show making a gating template .csv file for the openCyto way of doing things.
+
+To start with, here are the standard 'manual' gates that come with flowCore:
+
+* **rectangleGate** Describes a cubic shape in one or more dimensions–a rectangle in one dimension is simply an interval gate.
+* **polygonGate** Describes an arbitrary two dimensional polygonal gate.
+* **polytopeGate** Describes a region that is the convex hull of the given points. This gate can exist in dimensions higher than 2, unlike the polygonGate.
+* **ellipsoidGate** Describes an ellipsoidal region in two or more dimensions
+
+Each of the above are more like the manual gates you get in common Flow Cytometry software like FlowJo. They are created through a function sharing their name and all take the same arguments. We'll see some examples in a bit.
+
+FlowCore also has two data driven gates:
+
+* **norm2Filter** A robust method for finding a region that most resembles a bivariate Normal distribution.
+* **kmeansFilter** Identifies populations based on a one dimensional k-means clustering operation. Allows the specification of multiple populations.
+
+Then there is the additions in the openCyto framework, most of which are data driven:
+
+* **mindensity** The name of this gating function is self-explaining, that is to find the minimum as the cutpoint between negative and postive peaks in 1d density plot
+* **tailgate** This gating method is used in the senarios where there is only one major peak detected thus automatically disqualify the usage of  mindensity
+* **quantileGate** This method is an alternative to tailgate and it determines the cutpoint by the events quantile. This gating method is more commonly used in gating the rare populations when the target population is not prominent enough to stand out as the second peak.
+* **boundary** essentially constructs a rectangle gate from input range (min, max), which is useful for filtering out very extreme signals at the bounary.
+* **singletGate** construct a singlet gate by applying a robust linear model with rlm. By default, we model the forward-scatter height (FSC-H)as a function of forward-scatter area (FSC-A). If sidescatter is given, forward-scatter height is as a function of area + sidescatter + sidescatter / area.
+* **flowClust.2d** Robust model-based clustering using a t-mixture model with Box-Cox transformation. The cluster for the population of interest is selected as the one with cluster centroid nearest the target in Euclidean distance. If a target value is not given, the by default the largest cluster (i.e., the cluster with the largest proportion of observations) is selected as the population of interest. Returns a single polygon gate.
+* **quadGate.tmix** This gating method identifies two quadrants (first, and third quadrants) by fitting the data with tmixture model. It is particually useful when the two markers are not well resolved thus the regular quadGate method that is based on 1d gating will not find the perfect cut points on both dimensions.
+
+Gating goes on and on and on, the number of gating methods are increasing rapidly. Some of interest to me that I will be looking into are:
+
+* flowLearn and its predesessor flowDensity (semi-supervised density matching) - considered cutting edge
+* DeepCyTOF (Supervised Deep Learning method) - considered cutting edge
+* flowMeans (K means based approach)
+* tClust
+* FloCK (another K means method)
+* flowPeakssvm, Kmeanssvm (k-means and density-based clustering and support vector machines)
+* flowType, flowType FeaLect (1D gates extrapolated to multiple dimensions and bootstrapped LASSO classification)
+* SPADE (Density-based sampling, k-means clustering)
+* PRAMS (2D clustering and logistic regression)
+
+A simple gating strategy would be as follows:
+
+```{r}
+#Get our flowFrame
+fr <- getData(gs[[1]], "root")
+chnls <- c("FSC-A", "SSC-A")
+tCells <- openCyto:::.flowClust.2d(fr, channels = chnls, K=3,
+                                   target=c(70000, 50000),
+                                   quantile=0.9)
+p <- autoplot(fr, x=chnls[1], y=chnls[2])
+p + geom_gate(tCells)
+```
+
+
+
+
+
+
+
