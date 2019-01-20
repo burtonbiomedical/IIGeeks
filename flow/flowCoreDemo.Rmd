@@ -43,7 +43,7 @@ First we create a `ncdfFlowSet` - this is easy, we simple pass the path for the 
 Then we pass the resulting `ncdfFlowSet` too the `GatingSet` method.
 
 ```{r echo=TRUE}
-fcsFiles <- dir("/home/rossco/Documents/I&IGeeks/flow/fcs", full.names = TRUE)
+fcsFiles <- dir("/home/rossco/Documents/IIGeeks/flow/fcs", full.names = TRUE)
 ncfs  <- read.ncdfFlowSet(fcsFiles)
 gs <- GatingSet(ncfs)
 gs
@@ -55,13 +55,13 @@ gs
 
 Before I dive into data structures and plots, I want to quickly go over compensation and transforming data.
 
-Now typically you might need to compensate your data. Lucky for me this data was compensated on the machine. But, if you were to compensate you would use the following method:
+Now typically you might need to compensate your data. Lucky for me this the compensation matrix was calculated on the machine and linked to the file. You compensate by simply passing the compensation matrix and gating strategy to the following method:
 
 `compensate(gs, comp)`
 
 Where `comp` is a matrix of spillover values.
 
-Since my data is already compensated, I can access the compensation data as an attribute of the 'description' slot:
+I can access the compensation data as an attribute of the 'description' slot:
 
 ```{r echo=TRUE}
 #Access the flowframe of my ncfs object using square bracket notation
@@ -76,6 +76,11 @@ m <- ncfs[[1]]@description$SPILL
 rownames(m) <- paste(colnames(m))
 levelplot(m, scales=list(x=list(rot=90)))
 ```
+
+```{r echo=T}
+gs <- compensate(gs, m)
+```
+
 
 *Transforming data*
 
@@ -234,6 +239,7 @@ Gating goes on and on and on, the number of gating methods are increasing rapidl
 * flowLearn and its predesessor flowDensity (semi-supervised density matching) - considered cutting edge
 * DeepCyTOF (Supervised Deep Learning method) - considered cutting edge
 * flowMeans (K means based approach)
+* flowStats (collection of algorithms)
 * tClust
 * FloCK (another K means method)
 * flowPeakssvm, Kmeanssvm (k-means and density-based clustering and support vector machines)
@@ -241,22 +247,105 @@ Gating goes on and on and on, the number of gating methods are increasing rapidl
 * SPADE (Density-based sampling, k-means clustering)
 * PRAMS (2D clustering and logistic regression)
 
-A simple gating strategy would be as follows:
+I'm going to make a very simple gating strategy to start with, just to demonstrate the workflow. You assign the gate to an object and then can visualise using the `geom_gate` function in ggcyto.
 
-```{r}
+```{r echo=T}
 #Get our flowFrame
 fr <- getData(gs[[1]], "root")
 chnls <- c("FSC-A", "SSC-A")
-tCells <- openCyto:::.flowClust.2d(fr, channels = chnls, K=3,
-                                   target=c(70000, 50000),
-                                   quantile=0.9)
+nonDebris <- rectangleGate(filterId = "nonDebris", list("FSC-A" = c(50000, 150000),
+                                                        "SSC-A" = c(0,100000)))
 p <- autoplot(fr, x=chnls[1], y=chnls[2])
-p + geom_gate(tCells)
+p + geom_gate(nonDebris)
 ```
 
+Once we're happy with the gate, we add it to our GatingStrategy. It's useful to think of your GatingStrategy as a tree structure, where each gate is a node. You add the gate with the `add` function; you pass as arguments the GatingStrategy, the gate object, and the parent of the gated populations (the highest node is always "root").
 
+When you add a new gate you always have to run `recompute` too apply the gate to the underlying data. 
 
+```{r echo=T}
+add(gs, nonDebris, parent = "root")
+recompute(gs)
+```
+We can see the nodes in the gating structure as shown:
 
+```{r echo=T}
+getNodes(gs)
+```
 
+There is also a convenience function in openCyto that overloads the base function `plot`. When passed a GatingStructure it will plot the tree:
 
+```{r echo=T}
+plot(gs)
+```
 
+We can also pass the GatingStrategy into `autoplot` with the gate name:
+
+```{r echo=T}
+autoplot(gs, "nonDebris")
+```
+
+There are also functions in place to extract statistics for a gated population:
+
+```{r echo=T}
+# Cell counts
+getTotal(gs[[1]], "nonDebris")
+# Proportion of parent
+getProp(gs[[1]], "nonDebris")
+```
+
+Lets push forward with our gating strategy. I'm going to use some simple data driven gates provided by openCyto. These functions take a flowFrame as their first argument.
+
+flowClust uses density based clustering. It isn't the cutting edge, there are better performing algorithms now. It returns a gate for a single population. It requires a bit of hand holding: by default it will choose the largest population, so sometimes you have to give it a target range, you also need to state the number of populations expected in the analysed 2d area, and you can also specify a quantile which will narrow the gate by ignoring everything greater than the chosen quantile.
+
+```{r echo=T}
+fr <- getData(gs, "nonDebris")[[1]]
+tCell_gate <- openCyto::flowClust.2d(fr, "FSC-A","SSC-A", target=c(75000,25000), K=2, quantile = 0.9)
+add(gs, tCell_gate, parent = "nonDebris", name = "T-Cells")
+recompute(gs)
+```
+```{r echo=T}
+plotGate(gs, "T-Cells", xlim = "data", ylim = "data")
+```
+
+Next, we'll use a singlet gate:
+
+```{r echo=T}
+fr <- getData(gs, "T-Cells")[[1]]
+singlet_gate <- openCyto:::.singletGate(fr, channels=c("FSC-A","FSC-H"), wider_gate=TRUE, prediction_level=0.99, maxit=15)
+add(gs, singlet_gate, parent = "T-Cells", name = "SingleCells")
+recompute(gs)
+```
+```{r echo=T}
+plotGate(gs, "SingleCells", xlim = "data", ylim = "data")
+```
+
+```{r echo=T}
+fr <- getData(gs, "SingleCells")[[1]]
+liveCD3 <- openCyto::flowClust.2d(fr, "APC-Cy7-A","AmCyan-A", K=2, quantile = 0.9)
+add(gs, liveCD3, parent = "SingleCells", name = "Live T-Cells")
+recompute(gs)
+```
+
+```{r echo=T}
+#autoplot(fr, y="L/D", x="CD3", bins=128) + geom_gate(liveCD3)
+plotGate(gs, "Live T-Cells", xlim = "data", ylim = "data")
+```
+
+Plotting can now be 
+
+```{r}
+fr <- getData(gs, "Live T-Cells")[[1]]
+quadGate <- openCyto::gate_quad_sequential(fr, channels = c("BV711-A", "PE-Cy5-5-A"), gFunc='mindensity')
+#add(gs, quadGate, parent = "Live T-Cells", name=c("CD8+", "NA", "CD4+", "NA"))
+#recompute(gs)
+autoplot(fr, "CD4", "CD8", bins=300) + geom_gate(quadGate)
+```
+
+```{r}
+plot(gs)
+```
+
+```{r}
+plotGate(gs[[1]], xlim="data", ylim="data")
+```
