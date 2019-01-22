@@ -1,0 +1,6 @@
+alias	pop	parent	dims	gating_method	gating_args	collapseDataForGating	groupBy	preprocessing_method	preprocessing_args
+nonDebris	+	root	"FSC-A,SSC-A"	boundary	"min=c(50000,0),max=c(150000, 100000)"				
+tCells	+	nonDebris	"FSC-A,SSC-A"	flowClust	"target=c(75000,25000), K=2, quantile = 0.9"				
+singleCells	+	tCells	"FSC-A,FSC-H"	singletGate	"wider_gate=TRUE, prediction_level=0.99, maxit=15"				
+liveCD3	+	singleCells	"APC-Cy7-A,AmCyan-A"	flowClust	"K=2, quantile = 0.9"				
+*	-/++/-	liveCD3	"BV711-A,PE-Cy5-5-A"	mindensity					

@@ -43,7 +43,7 @@ First we create a `ncdfFlowSet` - this is easy, we simple pass the path for the 
 Then we pass the resulting `ncdfFlowSet` too the `GatingSet` method.
 
 ```{r echo=TRUE}
-fcsFiles <- dir("/home/rossco/Documents/IIGeeks/flow/fcs", full.names = TRUE)
+fcsFiles <- dir("/home/rossco/Documents/IIGeeks/flow/fcs/sepsis", full.names = TRUE)
 ncfs  <- read.ncdfFlowSet(fcsFiles)
 gs <- GatingSet(ncfs)
 gs
@@ -253,8 +253,7 @@ I'm going to make a very simple gating strategy to start with, just to demonstra
 #Get our flowFrame
 fr <- getData(gs[[1]], "root")
 chnls <- c("FSC-A", "SSC-A")
-nonDebris <- rectangleGate(filterId = "nonDebris", list("FSC-A" = c(50000, 150000),
-                                                        "SSC-A" = c(0,100000)))
+nonDebris <- rectangleGate(filterId = "nonDebris", list("FSC-A" = c(50000, 150000),"SSC-A" = c(0,100000)))
 p <- autoplot(fr, x=chnls[1], y=chnls[2])
 p + geom_gate(nonDebris)
 ```
@@ -349,3 +348,74 @@ plot(gs)
 ```{r}
 plotGate(gs[[1]], xlim="data", ylim="data")
 ```
+
+This is the manual way to setup a gating strategy for openCyto and is probably the best thing to do first, just so you can see that the gating is correct. But what you're supposed to do next is setip a gating template.
+
+Creating templaces is explained in the vignette:
+
+* https://www.bioconductor.org/packages/release/bioc/vignettes/openCyto/inst/doc/openCytoVignette.html
+* https://www.bioconductor.org/packages/release/bioc/vignettes/openCyto/inst/doc/HowToWriteCSVTemplate.html
+
+## Gating Template
+
+```{r echo=T}
+template_file <- "/home/rossco/Documents/IIGeeks/flow/gating_template.csv"
+template <- fread(template_file, autostart = 1L)
+template
+```
+
+```{r echo=T}
+gt <- gatingTemplate(template_file)
+gt
+```
+```{r echo=T}
+plot(gt)
+```
+
+```{r echo=T}
+Rm("nonDebris", gs)
+```
+
+```{r echo=T}
+gating(gt, gs, mc.cores=2, parallel_type = "multicore")
+```
+```{r echo=T}
+plotGate(gs[[1]])
+```
+
+```{recho=T}
+cd4 <- exprs(getData(gs, "BV711-A-PE-Cy5-5-A+")[[1]])
+cd8 <- exprs(getData(gs, "BV711-A+PE-Cy5-5-A-")[[1]])
+```
+
+```{r echo=T}
+meaningfulNames <- function(fr, m){
+  c_names <- colnames(fr)
+  desc <- fr@parameters$desc
+  for(i in seq(1,length(c_names))){
+    if(!is.na(desc[i])){
+      c_names[i] <- desc[i]
+    }
+  }
+  colnames(m) <- paste(c_names)
+  return(m)
+}
+
+cd4 <- meaningfulNames(getData(gs)[[1]], cd4)
+cd8 <- meaningfulNames(getData(gs)[[1]], cd8)
+```
+```{r echo=T}
+cd4 <- cbind(cd4, cell_type = c("CD4"))
+cd8 <- cbind(cd8, cell_type = c("CD8"))
+all <- rbind(cd4, cd8)[,c(7:20)][,-13]
+```
+
+```{r echo=T}
+require(MASS)
+write.matrix(all, file="dimensionality_reduction/SEPSIS.csv", sep=",")
+```
+
+
+
+
+
