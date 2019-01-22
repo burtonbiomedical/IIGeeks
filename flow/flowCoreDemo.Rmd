@@ -1,6 +1,8 @@
 ---
 title: "Flow Cytometry in R with openCyto"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 ## Intro
@@ -30,8 +32,8 @@ require(data.table)
 
 You can think of the data being organised as so:
 
-* At the lowest level is the `flowFrame` (see below)
-* Each fcs file will be contained in its how `flowFrame` embedded in a `flowSet`
+* At the lowest level is the `flowFrame`
+* Each fcs file will be contained in its own `flowFrame` embedded in a `flowSet`
   + we actually load data as an `ncdfFlowSet` - this is an optimised data structure where the the `flowSet` is stored on disk and only parts are loaded into memory as and when needed. This is important because .fcs files are big!
 * `GatingSet` objects then hold everything together and is the main API that the user will interact with. It is a container that holds `GatingHierarchy`. Think of a `GatingSet` as corresponding to a `flowSet` and a `GatingHierarchy` as corresponding to a `flowFrame`.
   + IMPORTANT `GatingSet` uses externnal pointers and therefore uses a reference semantic - i.e. functions that operative on a `GatingSet` have the potential side-effect of modifying the object
@@ -385,7 +387,7 @@ gating(gt, gs, mc.cores=2, parallel_type = "multicore")
 plotGate(gs[[1]])
 ```
 
-```{recho=T}
+```{r echo=T}
 cd4 <- exprs(getData(gs, "BV711-A-PE-Cy5-5-A+")[[1]])
 cd8 <- exprs(getData(gs, "BV711-A+PE-Cy5-5-A-")[[1]])
 ```
