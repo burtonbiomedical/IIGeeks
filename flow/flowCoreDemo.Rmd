@@ -21,6 +21,8 @@ I'm going to gently introduce you to flowCore's data structures within the openC
 ```{r echo=T}
 require(openCyto)
 require(ggcyto)
+require(MASS)
+require(data.table)
 ```
 
 
